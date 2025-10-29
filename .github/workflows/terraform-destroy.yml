@@ -7,18 +7,26 @@ on:
         description: 'Type "destroy" to confirm'
         required: true
         type: string
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
 
 env:
   TF_VERSION: '1.6.0'
   WORKING_DIR: './environments/dev'
+  AWS_REGION: 'us-east-1'
 
 jobs:
   destroy:
     name: '🗑️ Terraform Destroy'
     runs-on: ubuntu-latest
     if: github.event.inputs.confirm_destroy == 'destroy'
-    # Remover o cambiar environment si está bloqueando
-    # environment: production
+    environment: production
     
     steps:
     - name: Checkout
@@ -29,21 +37,50 @@ jobs:
       with:
         terraform_version: ${{ env.TF_VERSION }}
 
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
     - name: Terraform Init
       run: terraform init
       working-directory: ${{ env.WORKING_DIR }}
+
+    - name: Show what will be destroyed
+      run: terraform plan -destroy
+      working-directory: ${{ env.WORKING_DIR }}
       env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}  # ← AGREGAR
+        TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
+        TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
+        TF_VAR_aws_region: ${{ secrets.TF_VAR_aws_region }}
 
     - name: Terraform Destroy
       run: terraform destroy -auto-approve
       working-directory: ${{ env.WORKING_DIR }}
       env:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
+        TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
+        TF_VAR_aws_region: ${{ secrets.TF_VAR_aws_region }}
+
+    - name: Verify Destruction
+      run: |
+        echo "✅ Infrastructure destroyed successfully!"
+        echo "Verifying no resources remain..."
+        
+        # Verificar que no queden recursos
+        if aws ec2 describe-instances --filters "Name=tag:Project,Values=${{ secrets.TF_VAR_project_name }}" --query 'Reservations[*].Instances[?State.Name!=`terminated`]' --output text | grep -q .; then
+          echo "⚠️ Warning: Some EC2 instances may still exist"
+        else
+          echo "✅ No EC2 instances found"
+        fi
+        
+        if aws s3 ls | grep -q "${{ secrets.TF_VAR_project_name }}"; then
+          echo "⚠️ Warning: Some S3 buckets may still exist"
+        else
+          echo "✅ No S3 buckets found"
+        fi
+      env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}  # ← AGREGAR
-        # Verificar nombres exactos de secrets:
-        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}  # ← CAMBIAR
-        TF_VAR_environment: ${{ secrets.TF_VAR_ENVIRONMENT }}    # ← CAMBIAR
