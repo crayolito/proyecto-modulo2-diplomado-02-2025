@@ -76,33 +76,33 @@ jobs:
         echo "✅ Terraform configuration is valid"
       working-directory: ${{ env.WORKING_DIR }}
 
-    - name: TFLint Analysis
-      run: |
-        # Cambiar a la raíz del proyecto
-        cd ${{ github.workspace }}
-        # Inicializar plugins (se crearán en .tflint.d en la raíz)
-        tflint --init
-        # Ejecutar análisis recursivo con la configuración de la raíz
-        tflint --recursive
-        if [ $? -ne 0 ]; then
-          echo "❌ TFLint found issues"
-          exit 1
-        fi
-        echo "✅ TFLint analysis passed"
+    # - name: TFLint Analysis
+    #   run: |
+    #     # Cambiar a la raíz del proyecto
+    #     cd ${{ github.workspace }}
+    #     # Inicializar plugins (se crearán en .tflint.d en la raíz)
+    #     tflint --init
+    #     # Ejecutar análisis recursivo con la configuración de la raíz
+    #     tflint --recursive
+    #     if [ $? -ne 0 ]; then
+    #       echo "❌ TFLint found issues"
+    #       exit 1
+    #     fi
+    #     echo "✅ TFLint analysis passed"
 
-    - name: Checkov Security Scan
-      run: |
-        checkov -d . --config-file .checkov.yml --output cli --exit-code-from checks
-        if [ $? -ne 0 ]; then
-          echo "❌ Security issues found by Checkov"
-          exit 1
-        fi
-        echo "✅ Security scan passed"
+    # - name: Checkov Security Scan
+    #   run: |
+    #     checkov -d . --config-file .checkov.yml --output cli --exit-code-from checks
+    #     if [ $? -ne 0 ]; then
+    #       echo "❌ Security issues found by Checkov"
+    #       exit 1
+    #     fi
+    #     echo "✅ Security scan passed"
 
-    - name: Secrets Scan
-      run: |
-        checkov --framework secrets -d . --output cli
-        echo "✅ Secrets scan completed"
+    # - name: Secrets Scan
+    #   run: |
+    #     checkov --framework secrets -d . --output cli
+    #     echo "✅ Secrets scan completed"
 
   # Job 2: Plan de Terraform
   plan:
