@@ -23,6 +23,6 @@ secrets-scan-file-type:
   - .yaml
   - .json
 
-# Configuración de salida
+# Configuración de salidaa
 quiet: false
 compact: false
