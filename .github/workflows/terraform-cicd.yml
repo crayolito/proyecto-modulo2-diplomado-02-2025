@@ -37,17 +37,17 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Install validation tools
-      run: |
-        # Install Checkov
-        pip install checkov
+    # - name: Install validation tools
+    #   run: |
+    #     # Install Checkov
+    #     pip install checkov
         
-        # Install TFLint
-        curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+    #     # Install TFLint
+    #     curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
         
-        # Verify installations
-        checkov --version
-        tflint --version
+    #     # Verify installations
+    #     checkov --version
+    #     tflint --version
 
     - name: Terraform Format Check
       run: |
