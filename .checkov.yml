@@ -1,0 +1,28 @@
+# Configuración de Checkov
+framework:
+  - terraform
+  - secrets
+
+# Directorio a escanear
+directory:
+  - .
+
+# Formato de salida
+output: cli
+
+# Checks a ignorar (solo si es necesario y justificado)
+skip-check:
+  # Ejemplo: CKV_AWS_79 es para bucket logging - podemos ignorarlo en dev
+  - CKV_AWS_18  # S3 bucket logging (solo para demo)
+
+# Buscar secretos en el código
+secrets-scan-file-type:
+  - .tf
+  - .tfvars
+  - .yml
+  - .yaml
+  - .json
+
+# Configuración de salida
+quiet: false
+compact: false

@@ -1,0 +1,21 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfplan
+crash.log
+
+# Secrets - MUY IMPORTANTE
+*.pem
+*.key
+iac-key
+iac-key.pub
+.env
+
+# Tools
+.tflint.d/
+
+# OS
+.DS_Store
+Thumbs.db
