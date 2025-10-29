@@ -13,8 +13,8 @@ on:
         default: 'dev'
         type: choice
         options:
-        - dev
-        - staging
+          - dev
+          - staging
 
 env:
   TF_VERSION: '1.6.0'
@@ -27,60 +27,173 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.inputs.confirm_destroy == 'destroy'
     environment: production
-    
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Terraform Init
-      run: terraform init
-      working-directory: ${{ env.WORKING_DIR }}
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ${{ env.WORKING_DIR }}
 
-    - name: Show what will be destroyed
-      run: terraform plan -destroy
-      working-directory: ${{ env.WORKING_DIR }}
-      env:
-        TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
-        TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
-        TF_VAR_aws_region: ${{ secrets.TF_VAR_aws_region }}
+      - name: Show what will be destroyed
+        run: terraform plan -destroy
+        working-directory: ${{ env.WORKING_DIR }}
+        env:
+          TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
+          TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
+          TF_VAR_aws_region: ${{ secrets.TF_VAR_aws_region }}
 
-    - name: Terraform Destroy
-      run: terraform destroy -auto-approve
-      working-directory: ${{ env.WORKING_DIR }}
-      env:
-        TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
-        TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
-        TF_VAR_aws_region: ${{ secrets.TF_VAR_aws_region }}
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve
+        working-directory: ${{ env.WORKING_DIR }}
+        env:
+          TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
+          TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
+          TF_VAR_aws_region: ${{ secrets.TF_VAR_aws_region }}
 
-    - name: Verify Destruction
-      run: |
-        echo "✅ Infrastructure destroyed successfully!"
-        echo "Verifying no resources remain..."
-        
-        # Verificar que no queden recursos
-        if aws ec2 describe-instances --filters "Name=tag:Project,Values=${{ secrets.TF_VAR_project_name }}" --query 'Reservations[*].Instances[?State.Name!=`terminated`]' --output text | grep -q .; then
-          echo "⚠️ Warning: Some EC2 instances may still exist"
-        else
-          echo "✅ No EC2 instances found"
-        fi
-        
-        if aws s3 ls | grep -q "${{ secrets.TF_VAR_project_name }}"; then
-          echo "⚠️ Warning: Some S3 buckets may still exist"
-        else
-          echo "✅ No S3 buckets found"
-        fi
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Instalar jq
+        if: always()
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Cleanup por nombre de proyecto (S3, EC2, IAM, WAF, Secrets, SSM)
+        if: always()
+        env:
+          PREFIX: ${{ secrets.TF_VAR_project_name }}
+          ENVIRONMENT: ${{ secrets.TF_VAR_environment }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+
+          echo "Usando prefijo de proyecto: ${PREFIX} y environment: ${ENVIRONMENT}"
+
+          # 1) S3 BUCKETS que comiencen con ${PREFIX}-${ENVIRONMENT} o ${PREFIX}-
+          echo "==> Eliminando S3 buckets con prefijo"
+          BUCKETS=$(aws s3api list-buckets --query "Buckets[?starts_with(Name, \`${PREFIX}-${ENVIRONMENT}\`) || starts_with(Name, \`${PREFIX}-\`)].Name" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+          for B in $BUCKETS; do
+            echo "Bucket: $B"
+            # Vaciar versiones y delete markers (si hay versionado)
+            while true; do
+              RESP=$(aws s3api list-object-versions --bucket "$B" --output json || echo '{}')
+              CNT_VERS=$(echo "$RESP" | jq -r '.Versions | length // 0')
+              CNT_DEL=$(echo "$RESP" | jq -r '.DeleteMarkers | length // 0')
+              if [ "$CNT_VERS" -eq 0 ] && [ "$CNT_DEL" -eq 0 ]; then
+                break
+              fi
+              echo "$RESP" \
+                | jq -c '{Objects: (((.Versions // []) + (.DeleteMarkers // [])) | map({Key:.Key, VersionId:.VersionId}))}' \
+                | aws s3api delete-objects --bucket "$B" --delete file:///dev/stdin >/dev/null || true
+            done
+            # Vaciar (no versionado) y eliminar bucket
+            aws s3 rm "s3://$B" --recursive || true
+            aws s3 rb "s3://$B" --force || true
+          done
+
+          # 2) EC2 INSTANCES con tag Name que empiece por ${PREFIX}- o Environment == ${ENVIRONMENT}
+          echo "==> Terminando instancias EC2"
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${PREFIX}-*" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+                      "Name=tag:Environment,Values=${ENVIRONMENT}" \
+            --query "Reservations[].Instances[].InstanceId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+          if [ -n "${INSTANCES:-}" ]; then
+            aws ec2 terminate-instances --instance-ids $INSTANCES || true
+            aws ec2 wait instance-terminated --instance-ids $INSTANCES || true
+          fi
+
+          # 3) KEY PAIRS: ${PREFIX}-key
+          echo "==> Eliminando KeyPairs"
+          KP=$(aws ec2 describe-key-pairs --query "KeyPairs[?starts_with(KeyName, \`${PREFIX}-\`)].KeyName" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+          for K in $KP; do
+            aws ec2 delete-key-pair --key-name "$K" || true
+          done
+
+          # 4) SECURITY GROUPS: ${PREFIX}-ec2-sg y ${PREFIX}-secure-ec2-sg
+          echo "==> Eliminando Security Groups"
+          for SG_NAME in "${PREFIX}-ec2-sg" "${PREFIX}-secure-ec2-sg"; do
+            SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${SG_NAME}" --query "SecurityGroups[].GroupId" --output text || true)
+            if [ -n "$SG_ID" ]; then
+              # Quitar reglas dependientes (por si bloquea)
+              aws ec2 revoke-security-group-egress --group-id "$SG_ID" --ip-permissions '[]' || true
+              aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --ip-permissions '[]' || true
+              aws ec2 delete-security-group --group-id "$SG_ID" || true
+            fi
+          done
+
+          # 5) IAM: role/policy/instance profile -> ${PREFIX}-ec2-role / ${PREFIX}-ec2-policy / ${PREFIX}-ec2-profile
+          echo "==> Eliminando IAM (Role/Policy/Profile)"
+          ROLE="${PREFIX}-ec2-role"
+          POLICY_NAME="${PREFIX}-ec2-policy"
+          PROFILE="${PREFIX}-ec2-profile"
+
+          # Instance Profile: quitar role y borrar profile
+          if aws iam get-instance-profile --instance-profile-name "$PROFILE" >/dev/null 2>&1; then
+            set +e
+            ROLES_IN_PROFILE=$(aws iam get-instance-profile --instance-profile-name "$PROFILE" --query "InstanceProfile.Roles[].RoleName" --output text)
+            for R in $ROLES_IN_PROFILE; do
+              aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE" --role-name "$R"
+            done
+            set -e
+            aws iam delete-instance-profile --instance-profile-name "$PROFILE" || true
+          fi
+
+          # Policy: localizar ARN por nombre y desapegar de role, luego borrar
+          POLICY_ARN=$(aws iam list-policies --scope Local --query "Policies[?PolicyName==\`${POLICY_NAME}\`].Arn" --output text || true)
+          if [ -n "$POLICY_ARN" ]; then
+            ATTACHED=$(aws iam list-attached-role-policies --role-name "$ROLE" --query "AttachedPolicies[?PolicyArn==\`${POLICY_ARN}\`].PolicyArn" --output text 2>/dev/null || true)
+            if [ -n "$ATTACHED" ]; then
+              aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$POLICY_ARN" || true
+            fi
+            aws iam delete-policy --policy-arn "$POLICY_ARN" || true
+          fi
+
+          # Role
+          if aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
+            INLINE=$(aws iam list-role-policies --role-name "$ROLE" --query "PolicyNames[]" --output text || true)
+            for P in $INLINE; do
+              aws iam delete-role-policy --role-name "$ROLE" --policy-name "$P" || true
+            done
+            aws iam delete-role --role-name "$ROLE" || true
+          fi
+
+          # 6) WAFv2 WebACL: ${PREFIX}-waf-acl, scope REGIONAL
+          echo "==> Eliminando WAFv2 Web ACL"
+          WAF_NAME="${PREFIX}-waf-acl"
+          WAF=$(aws wafv2 list-web-acls --scope REGIONAL --region "${AWS_REGION}" --query "WebACLs[?Name==\`${WAF_NAME}\`].[Id,LockToken]" --output text 2>/dev/null || true)
+          if [ -n "$WAF" ]; then
+            WAF_ID=$(echo "$WAF" | awk '{print $1}')
+            WAF_LOCK=$(echo "$WAF" | awk '{print $2}')
+            aws wafv2 delete-web-acl --scope REGIONAL --id "$WAF_ID" --name "$WAF_NAME" --lock-token "$WAF_LOCK" --region "${AWS_REGION}" || true
+          fi
+
+          # 7) Secrets Manager: ${PREFIX}-db-credentials-v2
+          echo "==> Eliminando Secrets Manager"
+          SECRET_NAME="${PREFIX}-db-credentials-v2"
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" >/dev/null 2>&1; then
+            if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --query "DeletedDate" --output text 2>/dev/null | grep -qv "None"; then
+              aws secretsmanager restore-secret --secret-id "$SECRET_NAME" || true
+            fi
+            aws secretsmanager delete-secret --secret-id "$SECRET_NAME" --force-delete-without-recovery || true
+          fi
+
+          # 8) SSM Parameter: "/${PREFIX}/${ENVIRONMENT}/app-config"
+          echo "==> Eliminando SSM Parameter"
+          PARAM="/${PREFIX}/${ENVIRONMENT}/app-config"
+          if aws ssm get-parameter --name "$PARAM" >/dev/null 2>&1; then
+            aws ssm delete-parameter --name "$PARAM" || true
+          fi
+
+          echo "Cleanup por nombre de proyecto finalizado."
