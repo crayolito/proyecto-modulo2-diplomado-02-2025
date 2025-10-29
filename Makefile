@@ -1,4 +1,4 @@
-.PHONY: help init plan apply validate format clean
+.PHONY: help init plan apply validate format clean security-scan lint destroy
 
 help: ## Mostrar ayuda
 	@echo "Comandos disponibles:"
@@ -32,40 +32,3 @@ security-scan: ## Solo escaneo de seguridad
 
 lint: ## Solo linting
 	tflint --recursive
-```
-
-### **Paso 7: Actualizar .gitignore**
-
-**📁 `.gitignore` (agregar estas líneas)**
-```
-# Terraform
-*.tfstate
-*.tfstate.*
-.terraform/
-.terraform.lock.hcl
-crash.log
-*.tfvars
-*.tfvars.json
-
-# Secrets
-*.pem
-*.key
-.env
-secrets.txt
-
-# Tools
-.tflint.d/
-.checkov.yml.bak
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Scripts execution
-*.log
