@@ -10,7 +10,7 @@ crash.log
 *.pem
 *.key
 iac-key
-iac-key.pub
+# iac-key.pub
 .env
 
 # Tools
