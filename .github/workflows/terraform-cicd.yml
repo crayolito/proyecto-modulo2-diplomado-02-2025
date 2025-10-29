@@ -79,12 +79,14 @@ jobs:
     - name: TFLint Analysis
       run: |
         tflint --init
-        tflint --recursive
+        # Usar el archivo de configuración de la raíz
+        tflint --recursive --config ${{ github.workspace }}/.tflint.hcl
         if [ $? -ne 0 ]; then
           echo "❌ TFLint found issues"
           exit 1
         fi
         echo "✅ TFLint analysis passed"
+      working-directory: ${{ env.WORKING_DIR }}
 
     - name: Checkov Security Scan
       run: |
