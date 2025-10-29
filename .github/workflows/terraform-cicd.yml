@@ -78,15 +78,17 @@ jobs:
 
     - name: TFLint Analysis
       run: |
+        # Cambiar a la raíz del proyecto
+        cd ${{ github.workspace }}
+        # Inicializar plugins (se crearán en .tflint.d en la raíz)
         tflint --init
-        # Usar el archivo de configuración de la raíz
-        tflint --recursive --config ${{ github.workspace }}/.tflint.hcl
+        # Ejecutar análisis recursivo con la configuración de la raíz
+        tflint --recursive
         if [ $? -ne 0 ]; then
           echo "❌ TFLint found issues"
           exit 1
         fi
         echo "✅ TFLint analysis passed"
-      working-directory: ${{ env.WORKING_DIR }}
 
     - name: Checkov Security Scan
       run: |
