@@ -1,6 +1,6 @@
 # AWS Secrets Manager -> Gestiona secretos como contraseñas, claves API, tokens, etc.
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name        = "${var.project_name}-db-credentials"
+  name        = "${var.project_name}-db-credentials-v2"
   description = "Credenciales de la base de datos"
   # Ventana de recuperacion -> Si el secreto se elimina, se puede recuperar en los ultimos 7 dias.
   recovery_window_in_days = 7

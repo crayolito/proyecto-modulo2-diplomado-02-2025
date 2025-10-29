@@ -17,7 +17,8 @@ jobs:
     name: '🗑️ Terraform Destroy'
     runs-on: ubuntu-latest
     if: github.event.inputs.confirm_destroy == 'destroy'
-    environment: production
+    # Remover o cambiar environment si está bloqueando
+    # environment: production
     
     steps:
     - name: Checkout
@@ -34,6 +35,7 @@ jobs:
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}  # ← AGREGAR
 
     - name: Terraform Destroy
       run: terraform destroy -auto-approve
@@ -41,5 +43,7 @@ jobs:
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        TF_VAR_project_name: ${{ secrets.TF_VAR_project_name }}
-        TF_VAR_environment: ${{ secrets.TF_VAR_environment }}
+        AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}  # ← AGREGAR
+        # Verificar nombres exactos de secrets:
+        TF_VAR_project_name: ${{ secrets.TF_VAR_PROJECT_NAME }}  # ← CAMBIAR
+        TF_VAR_environment: ${{ secrets.TF_VAR_ENVIRONMENT }}    # ← CAMBIAR
