@@ -197,3 +197,107 @@ jobs:
           fi
 
           echo "Cleanup por nombre de proyecto finalizado."
+
+      - name: Cleanup VPCs por nombre de proyecto
+        if: always()
+        env:
+          PREFIX: ${{ secrets.TF_VAR_project_name }}
+          ENVIRONMENT: ${{ secrets.TF_VAR_environment }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+
+          echo "==> Buscando VPCs con tags Project=${PREFIX} y Environment=${ENVIRONMENT}"
+          VPCS=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Project,Values=${PREFIX}" "Name=tag:Environment,Values=${ENVIRONMENT}" \
+            --query "Vpcs[].VpcId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+
+          if [ -z "${VPCS:-}" ]; then
+            echo "No se encontraron VPCs para eliminar."
+            exit 0
+          fi
+
+          for VPC in $VPCS; do
+            echo "Procesando VPC: $VPC"
+
+            # 0) Detener y eliminar interfaces de red no utilizadas (por seguridad)
+            echo "   - Eliminando Network Interfaces no adjuntas"
+            ENIS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=${VPC}" \
+              --query "NetworkInterfaces[?Status=='available'].NetworkInterfaceId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+            for ENI in $ENIS; do
+              aws ec2 delete-network-interface --network-interface-id "$ENI" || true
+            done
+
+            # 1) Endpoints VPC
+            echo "   - Eliminando VPC Endpoints"
+            EP_IDS=$(aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=${VPC}" \
+              --query "VpcEndpoints[].VpcEndpointId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+            if [ -n "${EP_IDS:-}" ]; then
+              aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $EP_IDS || true
+            fi
+
+            # 2) NAT Gateways (por si existieran)
+            echo "   - Eliminando NAT Gateways"
+            NAT_IDS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=${VPC}" \
+              --query "NatGateways[].NatGatewayId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+            for NAT in $NAT_IDS; do
+              aws ec2 delete-nat-gateway --nat-gateway-id "$NAT" || true
+            done
+            if [ -n "${NAT_IDS:-}" ]; then
+              for NAT in $NAT_IDS; do
+                aws ec2 wait nat-gateway-deleted --nat-gateway-ids "$NAT" || true
+              done
+            fi
+
+            # 3) Internet Gateways
+            echo "   - Desasociando y eliminando Internet Gateways"
+            IGWS=$(aws ec2 describe-internet-gateways \
+              --filters "Name=attachment.vpc-id,Values=${VPC}" \
+              --query "InternetGateways[].InternetGatewayId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+            for IGW in $IGWS; do
+              aws ec2 detach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC" || true
+              aws ec2 delete-internet-gateway --internet-gateway-id "$IGW" || true
+            done
+
+            # 4) Route Tables (no-main)
+            echo "   - Eliminando Route Tables no principales"
+            RTBS=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=${VPC}" \
+              --query "RouteTables[].{Id:RouteTableId,Assoc:Associations}" --output json)
+            IDS_NO_MAIN=$(echo "$RTBS" | jq -r '.[] | select([.Assoc[]?.Main] | any == false) | .Id' 2>/dev/null || true)
+            for RT in $IDS_NO_MAIN; do
+              # eliminar asociaciones explícitas
+              ASSOCS=$(aws ec2 describe-route-tables --route-table-ids "$RT" \
+                --query "RouteTables[].Associations[?Main==\`false\`].RouteTableAssociationId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+              for A in $ASSOCS; do
+                aws ec2 disassociate-route-table --association-id "$A" || true
+              done
+              aws ec2 delete-route-table --route-table-id "$RT" || true
+            done
+
+            # 5) Subnets
+            echo "   - Eliminando Subnets"
+            SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${VPC}" \
+              --query "Subnets[].SubnetId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+            for S in $SUBNETS; do
+              aws ec2 delete-subnet --subnet-id "$S" || true
+            done
+
+            # 6) Security Groups (excepto 'default')
+            echo "   - Eliminando Security Groups (no default)"
+            SGS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=${VPC}" \
+              --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text | tr '\t' '\n' | sed '/^$/d' || true)
+            for SG in $SGS; do
+              # intenta limpiar reglas (evita dependencias residuales)
+              aws ec2 revoke-security-group-egress --group-id "$SG" --ip-permissions '[]' || true
+              aws ec2 revoke-security-group-ingress --group-id "$SG" --ip-permissions '[]' || true
+              aws ec2 delete-security-group --group-id "$SG" || true
+            done
+
+            # 7) NACLs custom (opcional, si los tuvieras; aquí no creamos, así que saltamos)
+
+            # 8) VPC final
+            echo "   - Eliminando VPC $VPC"
+            aws ec2 delete-vpc --vpc-id "$VPC" || true
+          done
+
+          echo "Eliminación de VPCs finalizada."
